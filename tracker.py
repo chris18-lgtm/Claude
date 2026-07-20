@@ -401,6 +401,13 @@ def verarbeite_dateien(pfade: list[str], beleg: bool, dry_run: bool) -> None:
 
 
 def main(argv=None) -> int:
+    # Windows-Konsolen laufen oft mit cp1252 statt UTF-8; ohne das hier
+    # bricht jede Ausgabe von ─/⚠/€ mit UnicodeEncodeError ab. In Tests ist
+    # sys.stdout ein io.StringIO ohne reconfigure() – daher der hasattr-Guard.
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8")
+
     parser = argparse.ArgumentParser(
         prog="tracker.py",
         description="Home-Charging-Tracker für BMW-Charging-Exporte (.xlsx)")
