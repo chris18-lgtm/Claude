@@ -62,6 +62,12 @@ class TrackerTestBasis(unittest.TestCase):
         tracker.TARIFE = [("2026-01-01", 0.30)]
         tracker.KORREKTURFAKTOR = 1.0
         tracker.KWH_QUELLE = "cost"
+        # feste Breite, damit rich-Tabellen in der Testumgebung nie kürzen
+        self._columns = os.environ.get("COLUMNS")
+        os.environ["COLUMNS"] = "120"
+        self.addCleanup(lambda: os.environ.__setitem__("COLUMNS", self._columns)
+                        if self._columns is not None
+                        else os.environ.pop("COLUMNS", None))
 
     def export(self, zeilen, name="export.xlsx"):
         pfad = os.path.join(self.tmp, name)
@@ -209,6 +215,27 @@ class TestLedger(TrackerTestBasis):
         out = self.run_main([pfad, "--dry-run"])
         self.assertIn("[DRY-RUN]", out)
         self.assertFalse(os.path.exists(self.ledger))
+
+
+class TestAusgabePfade(TrackerTestBasis):
+    def test_plain_fallback_ohne_rich(self):
+        self.addCleanup(setattr, tracker, "RICH_VERFUEGBAR",
+                        tracker.RICH_VERFUEGBAR)
+        tracker.RICH_VERFUEGBAR = False
+        pfad = self.export([ZEILE_NORMAL, ZEILE_FALLBACK])
+        out = self.run_main([pfad])
+        self.assertIn("Sessions  |  18,50 kWh  |  5,55 €", out)
+        self.assertIn("⚠", out)
+        self.assertIn("Session(s) ins Ledger", out)
+
+    @unittest.skipUnless(tracker.RICH_VERFUEGBAR, "rich nicht installiert")
+    def test_rich_tabelle(self):
+        pfad = self.export([ZEILE_NORMAL, ZEILE_FALLBACK])
+        out = self.run_main([pfad])
+        self.assertIn("⚡ Home-Charging Report – Juli 2026", out)
+        self.assertIn("18,50 kWh", out)
+        self.assertIn("5,55 €", out)
+        self.assertIn("━", out)   # rich-Tabellenrahmen (Kopfzeilen-Trenner)
 
 
 class TestBelegUndJahr(TrackerTestBasis):

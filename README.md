@@ -9,8 +9,13 @@ Ladestrom gegenüber dem Arbeitgeber.
 ## Installation
 
 ```bash
-pip install -r requirements.txt   # nur openpyxl
+pip install -r requirements.txt   # openpyxl + rich
 ```
+
+Die Reports werden mit [rich](https://github.com/Textualize/rich) als farbige
+Tabellen gerendert (Summenzeile fett, Ø-kW-Plausibilität grün/rot, Warnungen
+gelb). `rich` ist optional: fehlt es, fällt das Tool automatisch auf eine
+einfache Textausgabe zurück; beim Pipen/Umleiten lässt rich Farben selbst weg.
 
 ## Nutzung
 

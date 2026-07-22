@@ -22,6 +22,15 @@ from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 
 import openpyxl
 
+try:
+    from rich.console import Console
+    from rich.table import Table
+    from rich.text import Text
+    RICH_VERFUEGBAR = True
+    _CONSOLE = Console(highlight=False)
+except ImportError:  # rich ist optional – ohne rich einfache Textausgabe
+    RICH_VERFUEGBAR = False
+
 # ============================== CONFIG =======================================
 
 HOME_FILTER = "HOME"              # Charging location muss damit beginnen
@@ -245,30 +254,79 @@ def monatslabel(jahr: int, monat: int) -> str:
     return f"{MONATSNAMEN[monat - 1]} {jahr}"
 
 
+def meldung(text: str, stil: str = "") -> None:
+    """Statuszeile ausgeben – farbig mit rich, sonst plain."""
+    if RICH_VERFUEGBAR:
+        _CONSOLE.print(Text(text, style=stil))
+    else:
+        print(text)
+
+
 def drucke_monatsreport(jahr: int, monat: int, sessions: list[Session],
                         duplikate: int, dateien: list[str]) -> None:
-    linie = "─" * 58
-    print(f"\nHome-Charging Report – {monatslabel(jahr, monat)} "
-          f"({', '.join(dateien)})")
-    print(linie)
-    print(f"{'Datum':<14}{'kWh':>9}{'Tarif':>12}{'Kosten':>12}{'Ø kW':>8}")
+    zeilen = [(s, avg_kw(s.kwh, s.charged_min))
+              for s in sorted(sessions, key=lambda x: x.plugin_dt)]
     warnungen = []
-    for s in sorted(sessions, key=lambda x: x.plugin_dt):
-        kw = avg_kw(s.kwh, s.charged_min)
-        kw_txt = de(kw, 1) if kw is not None else "–"
-        print(f"{s.plugin_dt:%d.%m. %H:%M}{de(s.kwh):>9}"
-              f"{de(s.tarif) + ' €':>12}{de(s.kosten) + ' €':>12}{kw_txt:>8}")
+    for s, kw in zeilen:
         if kw is not None and kw < MIN_KW:
             warnungen.append(f"⚠ {s.plugin_dt:%d.%m.}: Ø Ladeleistung "
                              f"{de(kw, 1)} kW < {de(MIN_KW, 1)} kW – prüfen")
         elif kw is not None and kw > MAX_KW:
             warnungen.append(f"⚠ {s.plugin_dt:%d.%m.}: Ø Ladeleistung "
                              f"{de(kw, 1)} kW > {de(MAX_KW, 0)} kW – prüfen")
-    print(linie)
     sum_kwh = sum((s.kwh for s in sessions), Decimal(0))
     sum_eur = sum((s.kosten for s in sessions), Decimal(0))
     plural = "Session" if len(sessions) == 1 else "Sessions"
-    print(f"{len(sessions):>3} {plural}  |  {de(sum_kwh)} kWh  |  {de(sum_eur)} €")
+    titel = f"Home-Charging Report – {monatslabel(jahr, monat)}"
+    if RICH_VERFUEGBAR:
+        _monatsreport_rich(titel, dateien, zeilen, len(sessions), plural,
+                           sum_kwh, sum_eur, duplikate, warnungen)
+    else:
+        _monatsreport_plain(titel, dateien, zeilen, len(sessions), plural,
+                            sum_kwh, sum_eur, duplikate, warnungen)
+
+
+def _monatsreport_rich(titel, dateien, zeilen, anzahl, plural,
+                       sum_kwh, sum_eur, duplikate, warnungen) -> None:
+    table = Table(title=f"⚡ {titel}", caption=", ".join(dateien),
+                  title_style="bold", caption_style="dim",
+                  header_style="bold")
+    table.add_column("Datum")
+    for name in ("kWh", "Tarif", "Kosten", "Ø kW"):
+        table.add_column(name, justify="right")
+    for s, kw in zeilen:
+        if kw is None:
+            kw_zelle = Text("–")
+        elif kw < MIN_KW or kw > MAX_KW:
+            kw_zelle = Text(de(kw, 1), style="bold red")
+        else:
+            kw_zelle = Text(de(kw, 1), style="green")
+        table.add_row(f"{s.plugin_dt:%d.%m. %H:%M}", de(s.kwh),
+                      de(s.tarif) + " €", de(s.kosten) + " €", kw_zelle)
+    table.add_section()
+    table.add_row(f"{anzahl} {plural}", de(sum_kwh) + " kWh", "",
+                  de(sum_eur) + " €", "", style="bold")
+    _CONSOLE.print()
+    _CONSOLE.print(table)
+    if duplikate:
+        _CONSOLE.print(Text(f"{duplikate} Session(s) bereits im Ledger "
+                            "(übersprungen)", style="dim"))
+    for w in warnungen:
+        _CONSOLE.print(Text(w, style="yellow"))
+
+
+def _monatsreport_plain(titel, dateien, zeilen, anzahl, plural,
+                        sum_kwh, sum_eur, duplikate, warnungen) -> None:
+    linie = "─" * 58
+    print(f"\n{titel} ({', '.join(dateien)})")
+    print(linie)
+    print(f"{'Datum':<14}{'kWh':>9}{'Tarif':>12}{'Kosten':>12}{'Ø kW':>8}")
+    for s, kw in zeilen:
+        kw_txt = de(kw, 1) if kw is not None else "–"
+        print(f"{s.plugin_dt:%d.%m. %H:%M}{de(s.kwh):>9}"
+              f"{de(s.tarif) + ' €':>12}{de(s.kosten) + ' €':>12}{kw_txt:>8}")
+    print(linie)
+    print(f"{anzahl:>3} {plural}  |  {de(sum_kwh)} kWh  |  {de(sum_eur)} €")
     if duplikate:
         print(f"{duplikate:>3} Session(s) bereits im Ledger (übersprungen)")
     for w in warnungen:
@@ -309,30 +367,50 @@ Datum: ______________________  Unterschrift: ______________________
 
 
 def drucke_jahresauswertung(jahr: int, rows: list[dict]) -> None:
-    linie = "─" * 44
-    print(f"\nJahresauswertung {jahr} (Quelle: {LEDGER})")
-    print(linie)
-    print(f"{'Monat':<12}{'Sessions':>9}{'kWh':>11}{'Kosten':>12}")
     monate: dict[int, list[dict]] = {}
     for r in rows:
         dt = datetime.strptime(r["plugin_timestamp"], TS_FMT)
         if dt.year == jahr:
             monate.setdefault(dt.month, []).append(r)
+    werte = []  # (monatsname, anzahl, kwh, eur)
     sum_kwh = sum_eur = Decimal(0)
     anzahl = 0
     for monat in sorted(monate):
         mrows = monate[monat]
         kwh = sum((Decimal(r["kwh"]) for r in mrows), Decimal(0))
         eur = sum((Decimal(r["kosten_eur"]) for r in mrows), Decimal(0))
-        print(f"{MONATSNAMEN[monat - 1]:<12}{len(mrows):>9}"
-              f"{de(kwh):>11}{de(eur) + ' €':>12}")
+        werte.append((MONATSNAMEN[monat - 1], len(mrows), kwh, eur))
         sum_kwh += kwh
         sum_eur += eur
         anzahl += len(mrows)
-    print(linie)
+
     if anzahl == 0:
-        print(f"Keine Sessions für {jahr} im Ledger.")
+        meldung(f"\nJahresauswertung {jahr} (Quelle: {LEDGER})")
+        meldung(f"Keine Sessions für {jahr} im Ledger.", "yellow")
+        return
+
+    if RICH_VERFUEGBAR:
+        table = Table(title=f"⚡ Jahresauswertung {jahr}",
+                      caption=f"Quelle: {LEDGER}", title_style="bold",
+                      caption_style="dim", header_style="bold")
+        table.add_column("Monat")
+        for name in ("Sessions", "kWh", "Kosten"):
+            table.add_column(name, justify="right")
+        for name, n, kwh, eur in werte:
+            table.add_row(name, str(n), de(kwh), de(eur) + " €")
+        table.add_section()
+        table.add_row("Summe", str(anzahl), de(sum_kwh) + " kWh",
+                      de(sum_eur) + " €", style="bold")
+        _CONSOLE.print()
+        _CONSOLE.print(table)
     else:
+        linie = "─" * 44
+        print(f"\nJahresauswertung {jahr} (Quelle: {LEDGER})")
+        print(linie)
+        print(f"{'Monat':<12}{'Sessions':>9}{'kWh':>11}{'Kosten':>12}")
+        for name, n, kwh, eur in werte:
+            print(f"{name:<12}{n:>9}{de(kwh):>11}{de(eur) + ' €':>12}")
+        print(linie)
         print(f"{'Summe':<12}{anzahl:>9}{de(sum_kwh):>11}{de(sum_eur) + ' €':>12}")
 
 
@@ -367,7 +445,8 @@ def verarbeite_dateien(pfade: list[str], beleg: bool, dry_run: bool) -> None:
             neue.append(s)
 
     if not monate:
-        print("Keine Home-Sessions mit Energie > 0 in den Eingabedateien gefunden.")
+        meldung("Keine Home-Sessions mit Energie > 0 in den Eingabedateien "
+                "gefunden.", "yellow")
         return
 
     for (jahr, monat) in sorted(monate):
@@ -376,13 +455,16 @@ def verarbeite_dateien(pfade: list[str], beleg: bool, dry_run: bool) -> None:
                             e["dateien"])
 
     if dry_run:
-        print(f"\n[DRY-RUN] Ledger „{LEDGER}“ nicht verändert "
-              f"({len(neue)} neue Session(s) wären geschrieben worden).")
+        meldung(f"\n[DRY-RUN] Ledger „{LEDGER}“ nicht verändert "
+                f"({len(neue)} neue Session(s) wären geschrieben worden).",
+                "cyan")
     elif neue:
         schreibe_ledger(LEDGER, neue)
-        print(f"\n{len(neue)} Session(s) ins Ledger „{LEDGER}“ übernommen.")
+        meldung(f"\n✔ {len(neue)} Session(s) ins Ledger „{LEDGER}“ übernommen.",
+                "green")
     else:
-        print(f"\nKeine neuen Sessions – Ledger „{LEDGER}“ unverändert.")
+        meldung(f"\nKeine neuen Sessions – Ledger „{LEDGER}“ unverändert.",
+                "dim")
 
     if beleg:
         # Beleg über den vollen Monat: bestehende Ledger-Zeilen + neue Sessions,
@@ -397,7 +479,7 @@ def verarbeite_dateien(pfade: list[str], beleg: bool, dry_run: bool) -> None:
                     if datetime.strptime(r["plugin_timestamp"], TS_FMT).year == jahr
                     and datetime.strptime(r["plugin_timestamp"], TS_FMT).month == monat]
             pfad = schreibe_beleg(jahr, monat, rows)
-            print(f"Eigenbeleg geschrieben: {pfad}")
+            meldung(f"✔ Eigenbeleg geschrieben: {pfad}", "green")
 
 
 def main(argv=None) -> int:
