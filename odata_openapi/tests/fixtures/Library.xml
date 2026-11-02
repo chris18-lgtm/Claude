@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="utf-8"?>
+<edmx:Edmx Version="4.0" xmlns:edmx="http://docs.oasis-open.org/odata/ns/edmx">
+  <edmx:Reference Uri="https://oasis-tcs.github.io/odata-vocabularies/vocabularies/Org.OData.Core.V1.xml">
+    <edmx:Include Namespace="Org.OData.Core.V1" Alias="Core" />
+  </edmx:Reference>
+  <edmx:DataServices>
+    <Schema Namespace="Demo.Library" xmlns="http://docs.oasis-open.org/odata/ns/edm">
+      <EntityType Name="Book">
+        <Key><PropertyRef Name="ID" /></Key>
+        <Property Name="ID" Type="Edm.Int32" Nullable="false" />
+        <Property Name="Title" Type="Edm.String" MaxLength="200">
+          <Annotation Term="Core.Description" String="Titel – mit Umlaut äöü" />
+        </Property>
+        <Property Name="Price" Type="Edm.Decimal" Precision="9" Scale="2" />
+        <NavigationProperty Name="Author" Type="Demo.Library.Author" Partner="Books" />
+      </EntityType>
+      <EntityType Name="Author">
+        <Key><PropertyRef Name="ID" /></Key>
+        <Property Name="ID" Type="Edm.Int32" Nullable="false" />
+        <Property Name="Name" Type="Edm.String" />
+        <NavigationProperty Name="Books" Type="Collection(Demo.Library.Book)" Partner="Author" />
+      </EntityType>
+      <Action Name="Restock" IsBound="true">
+        <Parameter Name="in" Type="Demo.Library.Book" />
+        <Parameter Name="Quantity" Type="Edm.Int32" />
+      </Action>
+      <EntityContainer Name="Container">
+        <EntitySet Name="Books" EntityType="Demo.Library.Book">
+          <NavigationPropertyBinding Path="Author" Target="Authors" />
+        </EntitySet>
+        <EntitySet Name="Authors" EntityType="Demo.Library.Author">
+          <NavigationPropertyBinding Path="Books" Target="Books" />
+        </EntitySet>
+      </EntityContainer>
+    </Schema>
+  </edmx:DataServices>
+</edmx:Edmx>

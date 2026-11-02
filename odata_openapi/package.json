@@ -1,0 +1,10 @@
+{
+  "name": "csdl2openapi-python-bridge",
+  "private": true,
+  "description": "Pinned Node.js dependencies for csdl2openapi.py",
+  "license": "UNLICENSED",
+  "dependencies": {
+    "odata-csdl": "0.11.1",
+    "odata-openapi": "0.29.0"
+  }
+}

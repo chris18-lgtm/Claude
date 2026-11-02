@@ -1,0 +1,95 @@
+{
+  "$Version": "4.0",
+  "$Reference": {
+    "https://oasis-tcs.github.io/odata-vocabularies/vocabularies/Org.OData.Core.V1.json": {
+      "$Include": [
+        {
+          "$Namespace": "Org.OData.Core.V1",
+          "$Alias": "Core"
+        }
+      ]
+    }
+  },
+  "Demo.Library": {
+    "Book": {
+      "$Kind": "EntityType",
+      "$Key": [
+        "ID"
+      ],
+      "ID": {
+        "$Type": "Edm.Int32"
+      },
+      "Title": {
+        "$Nullable": true,
+        "$MaxLength": 200,
+        "@Core.Description": "Titel – mit Umlaut äöü"
+      },
+      "Price": {
+        "$Type": "Edm.Decimal",
+        "$Nullable": true,
+        "$Precision": 9,
+        "$Scale": 2
+      },
+      "Author": {
+        "$Kind": "NavigationProperty",
+        "$Type": "Demo.Library.Author",
+        "$Nullable": true,
+        "$Partner": "Books"
+      }
+    },
+    "Author": {
+      "$Kind": "EntityType",
+      "$Key": [
+        "ID"
+      ],
+      "ID": {
+        "$Type": "Edm.Int32"
+      },
+      "Name": {
+        "$Nullable": true
+      },
+      "Books": {
+        "$Kind": "NavigationProperty",
+        "$Collection": true,
+        "$Type": "Demo.Library.Book",
+        "$Partner": "Author"
+      }
+    },
+    "Restock": [
+      {
+        "$Kind": "Action",
+        "$IsBound": true,
+        "$Parameter": [
+          {
+            "$Name": "in",
+            "$Type": "Demo.Library.Book",
+            "$Nullable": true
+          },
+          {
+            "$Name": "Quantity",
+            "$Type": "Edm.Int32",
+            "$Nullable": true
+          }
+        ]
+      }
+    ],
+    "Container": {
+      "$Kind": "EntityContainer",
+      "Books": {
+        "$Collection": true,
+        "$Type": "Demo.Library.Book",
+        "$NavigationPropertyBinding": {
+          "Author": "Authors"
+        }
+      },
+      "Authors": {
+        "$Collection": true,
+        "$Type": "Demo.Library.Author",
+        "$NavigationPropertyBinding": {
+          "Books": "Books"
+        }
+      }
+    }
+  },
+  "$EntityContainer": "Demo.Library.Container"
+}
