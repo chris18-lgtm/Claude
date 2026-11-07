@@ -26,6 +26,11 @@ const TEXT = {
 }
 const LOCALE = "de_DE"
 const NOTIFY_WHEN_NONE = false // true: notification "Kein Wecker aktiv" after the last alarm is turned off
+// A one-time alarm stays enabled while it rings or is snoozed (9 min per snooze).
+// If the Shortcut runs within this many minutes after its time, it counts as today's
+// (already rung) alarm instead of tomorrow's.
+const SNOOZE_WINDOW_MIN = 20
+const TAP_URL = "clock-alarm://" // tapping the widget opens the Clock app's alarms; "" = open Scriptable
 
 // ===== Core logic (no Scriptable APIs, testable on its own) =====
 const DAY_TOKENS = {
@@ -97,6 +102,32 @@ function nextAlarm(alarms, now) {
   return best
 }
 
+// The date a one-time alarm rings, as seen by the Shortcut at `now`.
+function oneTimeRingDate(alarm, now) {
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate(), alarm.h, alarm.m, 0, 0)
+  const sinceMs = now - today
+  if (sinceMs >= 0 && sinceMs <= SNOOZE_WINDOW_MIN * 60 * 1000) return today
+  return nextOccurrence({ ...alarm, at: undefined }, now)
+}
+
+// "widget" | "shortcut" | "preview". Only "shortcut" overwrites the saved alarms,
+// and an empty input then means "all alarms are off". The share sheet and
+// notifications never get there, so they cannot wipe the saved alarms.
+function runMode(config, args) {
+  if (config.runsInWidget) return "widget"
+  if (config.runsInActionExtension || config.runsInNotification) return "preview"
+  const hasParameter = args.shortcutParameter !== null && args.shortcutParameter !== undefined
+  if (hasParameter || config.runsWithSiri || !config.runsInApp) return "shortcut"
+  return "preview"
+}
+
+// What the widget shows when there is no upcoming alarm.
+function emptyMessage(state) {
+  if (!state) return TEXT.setup
+  if (state.skipped) return `${state.skipped} ${TEXT.skipped}`
+  return TEXT.none
+}
+
 // 8 h 30 min -> "8 Std 30 Min"; from one day on, minutes are dropped: "2 Tagen 8 Std"
 function formatRemaining(ms) {
   const total = Math.floor(ms / 60000)
@@ -152,7 +183,7 @@ function runFromShortcut(now) {
       skipped++
       continue
     }
-    if (alarm.once) alarm.at = nextOccurrence(alarm, now).toISOString()
+    if (alarm.once) alarm.at = oneTimeRingDate(alarm, now).toISOString()
     alarms.push(alarm)
   }
   saveState({ savedAt: now.toISOString(), alarms, skipped })
@@ -185,15 +216,15 @@ function alarmIcon(size, color) {
 function buildWidget(state, now) {
   const family = config.widgetFamily || "small"
   const w = new ListWidget()
+  if (TAP_URL) w.url = TAP_URL
   const next = state ? nextAlarm(state.alarms || [], now) : null
-  // Recalculate shortly after the alarm rang, otherwise once an hour.
-  w.refreshAfterDate = next
-    ? new Date(next.date.getTime() + 60 * 1000)
-    : new Date(now.getTime() + 60 * 60 * 1000)
-  const emptyText = state ? TEXT.none : TEXT.setup
+  // After the ring time iOS counts the relative date *up* ("3 Min" again), so ask for
+  // a refresh at the ring time itself. iOS treats this as a request, not a promise.
+  w.refreshAfterDate = next ? next.date : new Date(now.getTime() + 60 * 60 * 1000)
+  const emptyText = emptyMessage(state)
 
   if (family === "accessoryInline") {
-    w.addText(next ? `⏰ ${formatDate(next.date, "EE HH:mm")}` : `⏰ ${TEXT.none}`)
+    w.addText(`⏰ ${next ? formatDate(next.date, "EE HH:mm") : emptyText}`)
     return w
   }
 
@@ -273,6 +304,13 @@ function buildWidget(state, now) {
       label.textColor = QUIET
       label.lineLimit = 1
     }
+    // Otherwise an unreadable alarm would only ever be mentioned in one notification.
+    if (state.skipped) {
+      const warn = w.addText(`⚠︎ ${state.skipped} ${TEXT.skipped}`)
+      warn.font = Font.systemFont(10)
+      warn.textColor = QUIET
+      warn.lineLimit = 1
+    }
   } else {
     const msg = w.addText(emptyText)
     msg.font = Font.semiboldSystemFont(15)
@@ -285,11 +323,11 @@ function buildWidget(state, now) {
 
 // ===== Main =====
 const now = new Date()
-const hasParameter = args.shortcutParameter !== null && args.shortcutParameter !== undefined
+const mode = runMode(config, args)
 
-if (config.runsInWidget) {
+if (mode === "widget") {
   Script.setWidget(buildWidget(loadState(), now))
-} else if (hasParameter || config.runsWithSiri || !config.runsInApp) {
+} else if (mode === "shortcut") {
   runFromShortcut(now)
 } else {
   await buildWidget(loadState(), now).presentSmall()
