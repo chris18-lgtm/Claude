@@ -98,14 +98,15 @@ function nextOccurrence(alarm, now) {
   return null
 }
 
-// All rings of one alarm in the coming week, strictly after `now`.
+// All rings of one alarm in the coming two weeks, strictly after `now`.
+// Two weeks, so the large widget can fill its list even with only weekday alarms.
 function occurrences(alarm, now) {
   if (alarm.once) {
     const date = nextOccurrence(alarm, now)
     return date ? [date] : []
   }
   const out = []
-  for (let i = 0; i <= 7; i++) {
+  for (let i = 0; i <= 14; i++) {
     const c = new Date(now.getFullYear(), now.getMonth(), now.getDate() + i, alarm.h, alarm.m, 0, 0)
     if (c > now && alarm.days.includes(c.getDay())) out.push(c)
   }
@@ -126,10 +127,14 @@ function nextAlarm(alarms, now) {
 
 const startOfDay = (d) => new Date(d.getFullYear(), d.getMonth(), d.getDate())
 
+// round(): a day with a daylight saving change is 23 or 25 hours long
+function calendarDaysBetween(from, to) {
+  return Math.round((startOfDay(to) - startOfDay(from)) / 86400000)
+}
+
 // "Heute" / "Morgen" by calendar day, or null for later days.
 function relativeDayName(date, now) {
-  // round(): a day with a daylight saving change is 23 or 25 hours long
-  const diff = Math.round((startOfDay(date) - startOfDay(now)) / 86400000)
+  const diff = calendarDaysBetween(now, date)
   if (diff === 0) return TEXT.today
   if (diff === 1) return TEXT.tomorrow
   return null
@@ -220,10 +225,12 @@ function formatDate(date, pattern) {
   return df.string(date)
 }
 
-// "Heute 06:30", "Morgen 06:30", otherwise "Mo. 06:30"
+// "Heute 06:30", "Morgen 06:30", "Mo. 06:30"; from 7 days on the weekday repeats,
+// so the date is added: "Mo. 16.11. 06:30"
 function formatWhen(date, now) {
   const day = relativeDayName(date, now)
-  return day ? `${day} ${formatDate(date, "HH:mm")}` : formatDate(date, "EE HH:mm")
+  if (day) return `${day} ${formatDate(date, "HH:mm")}`
+  return formatDate(date, calendarDaysBetween(now, date) >= 7 ? "EE dd.MM. HH:mm" : "EE HH:mm")
 }
 
 // ===== Run from the Shortcut =====
@@ -355,6 +362,7 @@ function buildWidget(state, now) {
     const left = row.addStack()
     left.layoutVertically()
     addCountdown(left, next, state, now, accent, 26)
+    row.addSpacer(10) // minimum gap, so the countdown shrinks instead of touching the list
     row.addSpacer()
     const right = row.addStack()
     right.layoutVertically()
@@ -367,7 +375,7 @@ function buildWidget(state, now) {
     w.addSpacer(16)
     addCountdown(w, next, state, now, accent, 34)
     w.addSpacer(20)
-    addLater(w, upcomingAlarms(state.alarms, now, 7).slice(1), now, 14)
+    addLater(w, upcomingAlarms(state.alarms, now, 9).slice(1), now, 14) // 8 rows fill the height
     w.addSpacer()
     return w
   }
@@ -389,7 +397,7 @@ function addCountdown(stack, next, state, now, accent, dateSize) {
   d.font = Font.boldRoundedSystemFont(dateSize)
   d.textColor = INK
   d.minimumScaleFactor = 0.5
-  d.lineLimit = 2
+  d.lineLimit = 1 // shrink rather than break "8 Std., 45 Min." after the number
 
   stack.addSpacer(4)
   const when = stack.addText(formatWhen(next.date, now))

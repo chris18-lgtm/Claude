@@ -12,7 +12,7 @@ const core = new Function(
   `${src.slice(start, end)}
   return { parseRepeat, parseLine, nextOccurrence, nextAlarm, formatRemaining,
            oneTimeRingDate, runMode, emptyMessage, relativeDayName, upcomingAlarms,
-           isUrgent, nextRefresh, TEXT }`
+           isUrgent, nextRefresh, calendarDaysBetween, TEXT }`
 )()
 
 // Saturday 2026-11-07, local time
@@ -125,4 +125,18 @@ test("nextRefresh: the earliest moment the widget content changes", () => {
   assert.equal(core.nextRefresh(next(at(23, 0)), at(14, 0)).getTime(), at(17, 0).getTime())
   // no alarm -> one hour
   assert.equal(core.nextRefresh(null, at(14, 0)).getTime(), at(15, 0).getTime())
+})
+
+test("upcomingAlarms looks two weeks ahead", () => {
+  const weekdays = [core.parseLine("06:30|Wochentags|Arbeit")]
+  const list = core.upcomingAlarms(weekdays, at(10, 0), 9) // Saturday 7th
+  assert.equal(list.length, 9)
+  assert.equal(list[8].date.getDate(), 19) // Thursday of the week after next
+})
+
+test("calendarDaysBetween counts calendar days, also across a DST change", () => {
+  assert.equal(core.calendarDaysBetween(at(23, 0), at(1, 0, 8)), 1)
+  assert.equal(core.calendarDaysBetween(at(10, 0), at(6, 30, 16)), 9)
+  // 2026-03-29: clocks go forward in Germany (a 23 h day if TZ observes it)
+  assert.equal(core.calendarDaysBetween(new Date(2026, 2, 28, 12), new Date(2026, 2, 30, 12)), 2)
 })
