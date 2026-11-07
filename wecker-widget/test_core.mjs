@@ -12,7 +12,7 @@ const core = new Function(
   `${src.slice(start, end)}
   return { parseRepeat, parseLine, nextOccurrence, nextAlarm, formatRemaining,
            oneTimeRingDate, runMode, emptyMessage, relativeDayName, upcomingAlarms,
-           isUrgent, nextRefresh, calendarDaysBetween, dayPhase, nextPhaseChange, TEXT }`
+           isUrgent, nextRefresh, calendarDaysBetween, displayLabel, TEXT }`
 )()
 
 // Saturday 2026-11-07, local time
@@ -119,8 +119,8 @@ test("nextRefresh: the earliest moment the widget content changes", () => {
   const next = (date) => ({ date })
   // 22:00, alarm 06:30 tomorrow -> midnight comes first (label "Morgen" -> "Heute")
   assert.equal(core.nextRefresh(next(at(6, 30, 8)), at(22, 0)).getTime(), at(0, 0, 8).getTime())
-  // 01:00, alarm 06:30 today -> already urgent; the morning colours start at 05:00
-  assert.equal(core.nextRefresh(next(at(6, 30)), at(1, 0)).getTime(), at(5, 0).getTime())
+  // 01:00, alarm 06:30 today -> already urgent, so the ring time
+  assert.equal(core.nextRefresh(next(at(6, 30)), at(1, 0)).getTime(), at(6, 30).getTime())
   // 05:10, alarm 06:30 today -> the ring time
   assert.equal(core.nextRefresh(next(at(6, 30)), at(5, 10)).getTime(), at(6, 30).getTime())
   // 14:00, alarm 23:00 today -> urgent from 17:00
@@ -143,16 +143,10 @@ test("calendarDaysBetween counts calendar days, also across a DST change", () =>
   assert.equal(core.calendarDaysBetween(new Date(2026, 2, 28, 12), new Date(2026, 2, 30, 12)), 2)
 })
 
-test("dayPhase picks the background by hour", () => {
-  assert.equal(core.dayPhase(at(4, 59)), "night")
-  assert.equal(core.dayPhase(at(5, 0)), "morning")
-  assert.equal(core.dayPhase(at(12, 0)), "day")
-  assert.equal(core.dayPhase(at(17, 0)), "evening")
-  assert.equal(core.dayPhase(at(23, 30)), "night")
-})
-
-test("nextPhaseChange is the next phase start, wrapping past midnight", () => {
-  assert.equal(core.nextPhaseChange(at(12, 0)).getTime(), at(17, 0).getTime())
-  assert.equal(core.nextPhaseChange(at(23, 0)).getTime(), at(5, 0, 8).getTime())
-  assert.equal(core.nextPhaseChange(at(2, 0)).getTime(), at(5, 0).getTime())
+test("displayLabel hides iOS default names only", () => {
+  assert.equal(core.displayLabel("Alarm"), "")
+  assert.equal(core.displayLabel(" wecker "), "")
+  assert.equal(core.displayLabel("Aufstehen"), "Aufstehen")
+  assert.equal(core.displayLabel("Alarm Arbeit"), "Alarm Arbeit")
+  assert.equal(core.displayLabel(undefined), "")
 })
