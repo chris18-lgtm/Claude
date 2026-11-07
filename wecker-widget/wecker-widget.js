@@ -23,6 +23,10 @@ const TEXT = {
   hours: "Std",
   minutes: "Min",
   skipped: "Wecker nicht lesbar",
+  today: "Heute",
+  tomorrow: "Morgen",
+  later: "Danach",
+  noMore: "Keine weiteren",
 }
 const LOCALE = "de_DE"
 const NOTIFY_WHEN_NONE = false // true: notification "Kein Wecker aktiv" after the last alarm is turned off
@@ -31,6 +35,7 @@ const NOTIFY_WHEN_NONE = false // true: notification "Kein Wecker aktiv" after t
 // (already rung) alarm instead of tomorrow's.
 const SNOOZE_WINDOW_MIN = 20
 const TAP_URL = "clock-alarm://" // tapping the widget opens the Clock app's alarms; "" = open Scriptable
+const URGENT_HOURS = 6 // home-screen accent turns red when the alarm is closer than this; 0 = off
 
 // ===== Core logic (no Scriptable APIs, testable on its own) =====
 const DAY_TOKENS = {
@@ -93,13 +98,60 @@ function nextOccurrence(alarm, now) {
   return null
 }
 
-function nextAlarm(alarms, now) {
-  let best = null
-  for (const alarm of alarms) {
+// All rings of one alarm in the coming week, strictly after `now`.
+function occurrences(alarm, now) {
+  if (alarm.once) {
     const date = nextOccurrence(alarm, now)
-    if (date && (!best || date < best.date)) best = { date, alarm }
+    return date ? [date] : []
   }
-  return best
+  const out = []
+  for (let i = 0; i <= 7; i++) {
+    const c = new Date(now.getFullYear(), now.getMonth(), now.getDate() + i, alarm.h, alarm.m, 0, 0)
+    if (c > now && alarm.days.includes(c.getDay())) out.push(c)
+  }
+  return out
+}
+
+// The next `count` rings across all alarms, earliest first: [{ date, alarm }]
+function upcomingAlarms(alarms, now, count) {
+  return alarms
+    .flatMap((alarm) => occurrences(alarm, now).map((date) => ({ date, alarm })))
+    .sort((a, b) => a.date - b.date)
+    .slice(0, count)
+}
+
+function nextAlarm(alarms, now) {
+  return upcomingAlarms(alarms, now, 1)[0] ?? null
+}
+
+const startOfDay = (d) => new Date(d.getFullYear(), d.getMonth(), d.getDate())
+
+// "Heute" / "Morgen" by calendar day, or null for later days.
+function relativeDayName(date, now) {
+  // round(): a day with a daylight saving change is 23 or 25 hours long
+  const diff = Math.round((startOfDay(date) - startOfDay(now)) / 86400000)
+  if (diff === 0) return TEXT.today
+  if (diff === 1) return TEXT.tomorrow
+  return null
+}
+
+function isUrgent(date, now) {
+  return URGENT_HOURS > 0 && date - now < URGENT_HOURS * 3600 * 1000
+}
+
+// Scriptable widgets have no timeline: one rendering stays until iOS refreshes it.
+// So ask for a refresh at the first moment the content would change: midnight
+// ("Morgen" becomes "Heute"), the switch to the urgent colour, or the ring itself.
+function nextRefresh(next, now) {
+  const midnight = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1)
+  const candidates = [midnight]
+  if (next) {
+    candidates.push(next.date)
+    if (URGENT_HOURS > 0) candidates.push(new Date(next.date - URGENT_HOURS * 3600 * 1000))
+  } else {
+    candidates.push(new Date(now.getTime() + 3600 * 1000))
+  }
+  return candidates.filter((d) => d > now).reduce((a, b) => (b < a ? b : a))
 }
 
 // The date a one-time alarm rings, as seen by the Shortcut at `now`.
@@ -168,6 +220,12 @@ function formatDate(date, pattern) {
   return df.string(date)
 }
 
+// "Heute 06:30", "Morgen 06:30", otherwise "Mo. 06:30"
+function formatWhen(date, now) {
+  const day = relativeDayName(date, now)
+  return day ? `${day} ${formatDate(date, "HH:mm")}` : formatDate(date, "EE HH:mm")
+}
+
 // ===== Run from the Shortcut =====
 function runFromShortcut(now) {
   let input = args.shortcutParameter
@@ -191,7 +249,7 @@ function runFromShortcut(now) {
   const next = nextAlarm(alarms, now)
   let message = ""
   if (next) {
-    const when = formatDate(next.date, "EE HH:mm")
+    const when = formatWhen(next.date, now)
     const label = next.alarm.label ? `, ${next.alarm.label}` : ""
     message = `⏰ ${TEXT.ringsIn} ${formatRemaining(next.date - now)} (${when}${label})`
   } else if (NOTIFY_WHEN_NONE) {
@@ -203,6 +261,7 @@ function runFromShortcut(now) {
 
 // ===== Widget =====
 const ACCENT = new Color("#FF9F0A") // the orange of the Clock app's alarms
+const URGENT = new Color("#FF453A") // iOS red, used when the alarm is closer than URGENT_HOURS
 const INK = Color.dynamic(new Color("#1C1C1E"), new Color("#FFFFFF"))
 const QUIET = Color.dynamic(new Color("#6E6E73"), new Color("#AEAEB2"))
 const PAPER = Color.dynamic(new Color("#FFFFFF"), new Color("#1C1C1E"))
@@ -218,13 +277,13 @@ function buildWidget(state, now) {
   const w = new ListWidget()
   if (TAP_URL) w.url = TAP_URL
   const next = state ? nextAlarm(state.alarms || [], now) : null
-  // After the ring time iOS counts the relative date *up* ("3 Min" again), so ask for
-  // a refresh at the ring time itself. iOS treats this as a request, not a promise.
-  w.refreshAfterDate = next ? next.date : new Date(now.getTime() + 60 * 60 * 1000)
+  // After the ring time iOS counts the relative date *up* ("3 Min" again), so the
+  // ring time is one of the refresh moments. iOS treats this as a request, not a promise.
+  w.refreshAfterDate = nextRefresh(next, now)
   const emptyText = emptyMessage(state)
 
   if (family === "accessoryInline") {
-    w.addText(`⏰ ${next ? formatDate(next.date, "EE HH:mm") : emptyText}`)
+    w.addText(`⏰ ${next ? formatWhen(next.date, now) : emptyText}`)
     return w
   }
 
@@ -251,7 +310,7 @@ function buildWidget(state, now) {
       d.font = Font.boldRoundedSystemFont(17)
       d.minimumScaleFactor = 0.7
       d.lineLimit = 1
-      const f = w.addText(formatDate(next.date, "EE HH:mm"))
+      const f = w.addText(formatWhen(next.date, now))
       f.font = Font.systemFont(12)
       f.lineLimit = 1
     } else {
@@ -265,10 +324,11 @@ function buildWidget(state, now) {
   // Home screen: small, medium, large
   w.backgroundColor = PAPER
   w.setPadding(14, 14, 14, 14)
+  const accent = next && isUrgent(next.date, now) ? URGENT : ACCENT
 
   const top = w.addStack()
   top.centerAlignContent()
-  const icon = alarmIcon(13, ACCENT)
+  const icon = alarmIcon(13, accent)
   const img = top.addImage(icon.image)
   img.imageSize = new Size(13, 13)
   img.tintColor = icon.color
@@ -277,48 +337,108 @@ function buildWidget(state, now) {
   head.font = Font.semiboldSystemFont(12)
   head.textColor = QUIET
 
-  w.addSpacer()
-
-  if (next) {
-    const lead = w.addText(TEXT.ringsIn)
-    lead.font = Font.systemFont(12)
-    lead.textColor = QUIET
-
-    // The one big element: a countdown that iOS keeps updating on its own.
-    const d = w.addDate(next.date)
-    d.applyRelativeStyle()
-    d.font = Font.boldRoundedSystemFont(family === "small" ? 24 : 30)
-    d.textColor = INK
-    d.minimumScaleFactor = 0.5
-    d.lineLimit = 2
-
+  if (!next) {
     w.addSpacer()
-
-    const when = w.addText(formatDate(next.date, "EE HH:mm"))
-    when.font = Font.semiboldRoundedSystemFont(13)
-    when.textColor = ACCENT
-    when.lineLimit = 1
-    if (next.alarm.label) {
-      const label = w.addText(next.alarm.label)
-      label.font = Font.systemFont(11)
-      label.textColor = QUIET
-      label.lineLimit = 1
-    }
-    // Otherwise an unreadable alarm would only ever be mentioned in one notification.
-    if (state.skipped) {
-      const warn = w.addText(`⚠︎ ${state.skipped} ${TEXT.skipped}`)
-      warn.font = Font.systemFont(10)
-      warn.textColor = QUIET
-      warn.lineLimit = 1
-    }
-  } else {
     const msg = w.addText(emptyText)
     msg.font = Font.semiboldSystemFont(15)
     msg.textColor = INK
     msg.minimumScaleFactor = 0.7
     w.addSpacer()
+    return w
   }
+
+  if (family === "medium") {
+    // Countdown on the left, the following rings on the right.
+    w.addSpacer()
+    const row = w.addStack()
+    row.bottomAlignContent()
+    const left = row.addStack()
+    left.layoutVertically()
+    addCountdown(left, next, state, now, accent, 26)
+    row.addSpacer()
+    const right = row.addStack()
+    right.layoutVertically()
+    right.size = new Size(135, 0) // fixed width, height fits the content
+    addLater(right, upcomingAlarms(state.alarms, now, 4).slice(1), now, 12)
+    return w
+  }
+
+  if (family === "large") {
+    w.addSpacer(16)
+    addCountdown(w, next, state, now, accent, 34)
+    w.addSpacer(20)
+    addLater(w, upcomingAlarms(state.alarms, now, 7).slice(1), now, 14)
+    w.addSpacer()
+    return w
+  }
+
+  w.addSpacer()
+  addCountdown(w, next, state, now, accent, 24)
   return w
+}
+
+// "Klingelt in", the live countdown, ring time, label and a warning for unreadable alarms.
+function addCountdown(stack, next, state, now, accent, dateSize) {
+  const lead = stack.addText(TEXT.ringsIn)
+  lead.font = Font.systemFont(12)
+  lead.textColor = QUIET
+
+  // The one big element: a countdown that iOS keeps updating on its own.
+  const d = stack.addDate(next.date)
+  d.applyRelativeStyle()
+  d.font = Font.boldRoundedSystemFont(dateSize)
+  d.textColor = INK
+  d.minimumScaleFactor = 0.5
+  d.lineLimit = 2
+
+  stack.addSpacer(4)
+  const when = stack.addText(formatWhen(next.date, now))
+  when.font = Font.semiboldRoundedSystemFont(13)
+  when.textColor = accent
+  when.lineLimit = 1
+  if (next.alarm.label) {
+    const label = stack.addText(next.alarm.label)
+    label.font = Font.systemFont(11)
+    label.textColor = QUIET
+    label.lineLimit = 1
+  }
+  // Otherwise an unreadable alarm would only ever be mentioned in one notification.
+  if (state.skipped) {
+    const warn = stack.addText(`⚠︎ ${state.skipped} ${TEXT.skipped}`)
+    warn.font = Font.systemFont(10)
+    warn.textColor = QUIET
+    warn.lineLimit = 1
+  }
+}
+
+// "DANACH" and one row per following ring: "Morgen 06:30  Arbeit"
+function addLater(stack, later, now, size) {
+  const head = stack.addText(TEXT.later.toUpperCase())
+  head.font = Font.semiboldSystemFont(10)
+  head.textColor = QUIET
+  stack.addSpacer(4)
+  if (!later.length) {
+    const t = stack.addText(TEXT.noMore)
+    t.font = Font.systemFont(size)
+    t.textColor = QUIET
+    return
+  }
+  for (const { date, alarm } of later) {
+    const row = stack.addStack()
+    row.centerAlignContent()
+    const t = row.addText(formatWhen(date, now))
+    t.font = Font.semiboldRoundedSystemFont(size)
+    t.textColor = INK
+    t.lineLimit = 1
+    if (alarm.label) {
+      row.addSpacer(6)
+      const l = row.addText(alarm.label)
+      l.font = Font.systemFont(size)
+      l.textColor = QUIET
+      l.lineLimit = 1
+    }
+    stack.addSpacer(3)
+  }
 }
 
 // ===== Main =====

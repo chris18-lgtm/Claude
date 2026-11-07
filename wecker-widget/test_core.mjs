@@ -11,7 +11,8 @@ assert.ok(start >= 0 && end > start, "section markers missing in wecker-widget.j
 const core = new Function(
   `${src.slice(start, end)}
   return { parseRepeat, parseLine, nextOccurrence, nextAlarm, formatRemaining,
-           oneTimeRingDate, runMode, emptyMessage, TEXT }`
+           oneTimeRingDate, runMode, emptyMessage, relativeDayName, upcomingAlarms,
+           isUrgent, nextRefresh, TEXT }`
 )()
 
 // Saturday 2026-11-07, local time
@@ -91,4 +92,37 @@ test("emptyMessage does not claim 'no alarm' when alarms could not be read", () 
   assert.equal(core.emptyMessage(null), core.TEXT.setup)
   assert.equal(core.emptyMessage({ alarms: [], skipped: 0 }), core.TEXT.none)
   assert.equal(core.emptyMessage({ alarms: [], skipped: 2 }), `2 ${core.TEXT.skipped}`)
+})
+
+test("relativeDayName says Heute/Morgen by calendar day, not by 24 h", () => {
+  assert.equal(core.relativeDayName(at(23, 59), at(0, 1)), "Heute")
+  assert.equal(core.relativeDayName(at(0, 5, 8), at(23, 55)), "Morgen") // 10 min away, still tomorrow
+  assert.equal(core.relativeDayName(at(6, 30, 9), at(23, 0)), null)
+})
+
+test("upcomingAlarms lists the next rings across all alarms, repeats included", () => {
+  const alarms = [core.parseLine("06:30|Wochentags|Arbeit"), core.parseLine("09:00|Nie|Ausschlafen")]
+  const list = core.upcomingAlarms(alarms, at(10, 0), 4) // Saturday 10:00
+  assert.deepEqual(list.map((x) => [x.date.getDate(), x.date.getHours(), x.alarm.label]), [
+    [8, 9, "Ausschlafen"], [9, 6, "Arbeit"], [10, 6, "Arbeit"], [11, 6, "Arbeit"],
+  ])
+  assert.equal(core.upcomingAlarms([], at(10, 0), 3).length, 0)
+  assert.equal(core.nextAlarm(alarms, at(10, 0)).alarm.label, "Ausschlafen")
+})
+
+test("isUrgent below URGENT_HOURS", () => {
+  assert.equal(core.isUrgent(at(6, 0), at(0, 1)), true)
+  assert.equal(core.isUrgent(at(6, 0), at(23, 0, 6)), false)
+})
+
+test("nextRefresh: the earliest moment the widget content changes", () => {
+  const next = (date) => ({ date })
+  // 22:00, alarm 06:30 tomorrow -> midnight comes first (label "Morgen" -> "Heute")
+  assert.equal(core.nextRefresh(next(at(6, 30, 8)), at(22, 0)).getTime(), at(0, 0, 8).getTime())
+  // 01:00, alarm 06:30 today -> turns urgent at 00:30 (passed), so the ring time
+  assert.equal(core.nextRefresh(next(at(6, 30)), at(1, 0)).getTime(), at(6, 30).getTime())
+  // 14:00, alarm 23:00 today -> urgent from 17:00
+  assert.equal(core.nextRefresh(next(at(23, 0)), at(14, 0)).getTime(), at(17, 0).getTime())
+  // no alarm -> one hour
+  assert.equal(core.nextRefresh(null, at(14, 0)).getTime(), at(15, 0).getTime())
 })
