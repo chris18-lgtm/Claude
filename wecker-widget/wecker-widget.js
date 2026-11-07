@@ -37,11 +37,12 @@ const SNOOZE_WINDOW_MIN = 20
 // Tapping the widget opens the Clock app. clock-alarm:// goes straight to the Alarms tab,
 // but Apple does not document it. If a tap does not open the Clock app, create a Shortcut
 // with the single action "Open App → Clock" and put its name here; a tap then runs it.
-const CLOCK_SHORTCUT = "" // e.g. "Uhr öffnen"
+const CLOCK_SHORTCUT = "Uhr öffnen" // clock-alarm:// did not open the Clock app on the iPhone this was tested on; "" = try it
 const TAP_URL = CLOCK_SHORTCUT
   ? `shortcuts://run-shortcut?name=${encodeURIComponent(CLOCK_SHORTCUT)}`
   : "clock-alarm://"
-const URGENT_HOURS = 6 // home-screen accent turns red when the alarm is closer than this; 0 = off
+const URGENT_HOURS = 6 // home-screen ring time turns red when the alarm is closer than this; 0 = off
+const TIME_GRADIENT = true // home-screen background follows the time of day; false = plain white/black
 
 // ===== Core logic (no Scriptable APIs, testable on its own) =====
 const DAY_TOKENS = {
@@ -150,12 +151,31 @@ function isUrgent(date, now) {
   return URGENT_HOURS > 0 && date - now < URGENT_HOURS * 3600 * 1000
 }
 
+// Background colours by time of day: [start hour, phase]
+const PHASES = [[5, "morning"], [9, "day"], [17, "evening"], [22, "night"]]
+
+function dayPhase(now) {
+  let phase = PHASES[PHASES.length - 1][1] // before the first start: still night
+  for (const [start, name] of PHASES) if (now.getHours() >= start) phase = name
+  return phase
+}
+
+function nextPhaseChange(now) {
+  for (const [start] of PHASES) {
+    const d = new Date(now.getFullYear(), now.getMonth(), now.getDate(), start)
+    if (d > now) return d
+  }
+  return new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1, PHASES[0][0])
+}
+
 // Scriptable widgets have no timeline: one rendering stays until iOS refreshes it.
 // So ask for a refresh at the first moment the content would change: midnight
-// ("Morgen" becomes "Heute"), the switch to the urgent colour, or the ring itself.
+// ("Morgen" becomes "Heute"), the next background colour, the switch to urgent,
+// or the ring itself.
 function nextRefresh(next, now) {
   const midnight = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1)
   const candidates = [midnight]
+  if (TIME_GRADIENT) candidates.push(nextPhaseChange(now))
   if (next) {
     candidates.push(next.date)
     if (URGENT_HOURS > 0) candidates.push(new Date(next.date - URGENT_HOURS * 3600 * 1000))
@@ -279,6 +299,38 @@ const INK = Color.dynamic(new Color("#1C1C1E"), new Color("#FFFFFF"))
 const QUIET = Color.dynamic(new Color("#6E6E73"), new Color("#AEAEB2"))
 const PAPER = Color.dynamic(new Color("#FFFFFF"), new Color("#1C1C1E"))
 
+// Time-of-day backgrounds, top left to bottom right. White and 80 % white text stay
+// readable on both ends (contrast about 4.5:1 or better).
+const GRADIENTS = {
+  night: { colors: ["#0B1026", "#2A3470"], accent: "#FFC266" },
+  morning: { colors: ["#3B2F7A", "#99402F"], accent: "#FFE2A8" },
+  day: { colors: ["#0F4C9E", "#175FA0"], accent: "#FFE08A" },
+  evening: { colors: ["#3A1C71", "#8E3559"], accent: "#FFD0A1" },
+}
+// Red text would vanish on the evening and morning colours, so "soon" becomes a red pill.
+const URGENT_PILL = new Color("#D92D20")
+
+// Sets the home-screen background and returns the text colours: { ink, quiet, accent, pill }
+function applyLook(w, now, urgent) {
+  if (!TIME_GRADIENT) {
+    w.backgroundColor = PAPER
+    return { ink: INK, quiet: QUIET, accent: urgent ? URGENT : ACCENT, pill: null }
+  }
+  const look = GRADIENTS[dayPhase(now)]
+  const bg = new LinearGradient()
+  bg.colors = look.colors.map((hex) => new Color(hex))
+  bg.locations = [0, 1]
+  bg.startPoint = new Point(0, 0)
+  bg.endPoint = new Point(1, 1)
+  w.backgroundGradient = bg
+  return {
+    ink: Color.white(),
+    quiet: new Color("#FFFFFF", 0.8),
+    accent: new Color(look.accent),
+    pill: urgent ? URGENT_PILL : null,
+  }
+}
+
 function alarmIcon(size, color) {
   const symbol = SFSymbol.named("alarm.fill")
   symbol.applyFont(Font.systemFont(size))
@@ -335,26 +387,26 @@ function buildWidget(state, now) {
   }
 
   // Home screen: small, medium, large
-  w.backgroundColor = PAPER
   w.setPadding(14, 14, 14, 14)
-  const accent = next && isUrgent(next.date, now) ? URGENT : ACCENT
+  const look = applyLook(w, now, next && isUrgent(next.date, now))
 
   const top = w.addStack()
   top.centerAlignContent()
-  const icon = alarmIcon(13, accent)
+  const icon = alarmIcon(13, look.accent)
   const img = top.addImage(icon.image)
   img.imageSize = new Size(13, 13)
   img.tintColor = icon.color
   top.addSpacer(5)
   const head = top.addText(TEXT.header)
   head.font = Font.semiboldSystemFont(12)
-  head.textColor = QUIET
+  head.textColor = look.quiet
+  top.addSpacer() // keep the header left-aligned in every size
 
   if (!next) {
     w.addSpacer()
     const msg = w.addText(emptyText)
     msg.font = Font.semiboldSystemFont(15)
-    msg.textColor = INK
+    msg.textColor = look.ink
     msg.minimumScaleFactor = 0.7
     w.addSpacer()
     return w
@@ -367,74 +419,84 @@ function buildWidget(state, now) {
     row.bottomAlignContent()
     const left = row.addStack()
     left.layoutVertically()
-    addCountdown(left, next, state, now, accent, 26)
+    addCountdown(left, next, state, now, look, 26)
     row.addSpacer(10) // minimum gap, so the countdown shrinks instead of touching the list
     row.addSpacer()
     const right = row.addStack()
     right.layoutVertically()
     right.size = new Size(135, 0) // fixed width, height fits the content
-    addLater(right, upcomingAlarms(state.alarms, now, 4).slice(1), now, 12)
+    addLater(right, upcomingAlarms(state.alarms, now, 4).slice(1), now, 12, look)
     return w
   }
 
   if (family === "large") {
     w.addSpacer(16)
-    addCountdown(w, next, state, now, accent, 34)
+    addCountdown(w, next, state, now, look, 34)
     w.addSpacer(20)
-    addLater(w, upcomingAlarms(state.alarms, now, 9).slice(1), now, 14) // 8 rows fill the height
+    addLater(w, upcomingAlarms(state.alarms, now, 9).slice(1), now, 14, look) // 8 rows fill the height
     w.addSpacer()
     return w
   }
 
   w.addSpacer()
-  addCountdown(w, next, state, now, accent, 24)
+  addCountdown(w, next, state, now, look, 24)
   return w
 }
 
 // "Klingelt in", the live countdown, ring time, label and a warning for unreadable alarms.
-function addCountdown(stack, next, state, now, accent, dateSize) {
+function addCountdown(stack, next, state, now, look, dateSize) {
   const lead = stack.addText(TEXT.ringsIn)
   lead.font = Font.systemFont(12)
-  lead.textColor = QUIET
+  lead.textColor = look.quiet
 
   // The one big element: a countdown that iOS keeps updating on its own.
   const d = stack.addDate(next.date)
   d.applyRelativeStyle()
   d.font = Font.boldRoundedSystemFont(dateSize)
-  d.textColor = INK
+  d.textColor = look.ink
   d.minimumScaleFactor = 0.5
   d.lineLimit = 1 // shrink rather than break "8 Std., 45 Min." after the number
 
   stack.addSpacer(4)
-  const when = stack.addText(formatWhen(next.date, now))
+  // Less than URGENT_HOURS left: a red pill on the gradient, red text on the plain background.
+  let whenStack = stack
+  if (look.pill) {
+    const row = stack.addStack() // the trailing spacer keeps the pill left and text-wide
+    whenStack = row.addStack()
+    row.addSpacer()
+    whenStack.backgroundColor = look.pill
+    whenStack.cornerRadius = 6
+    whenStack.setPadding(2, 6, 2, 6)
+  }
+  const when = whenStack.addText(formatWhen(next.date, now))
   when.font = Font.semiboldRoundedSystemFont(13)
-  when.textColor = accent
+  when.textColor = look.pill ? Color.white() : look.accent
   when.lineLimit = 1
   if (next.alarm.label) {
     const label = stack.addText(next.alarm.label)
     label.font = Font.systemFont(11)
-    label.textColor = QUIET
+    label.textColor = look.quiet
     label.lineLimit = 1
   }
   // Otherwise an unreadable alarm would only ever be mentioned in one notification.
   if (state.skipped) {
     const warn = stack.addText(`⚠︎ ${state.skipped} ${TEXT.skipped}`)
     warn.font = Font.systemFont(10)
-    warn.textColor = QUIET
+    warn.textColor = look.quiet
     warn.lineLimit = 1
   }
 }
 
 // "DANACH" and one row per following ring: "Morgen 06:30  Arbeit"
-function addLater(stack, later, now, size) {
+function addLater(stack, later, now, size, look) {
   const head = stack.addText(TEXT.later.toUpperCase())
   head.font = Font.semiboldSystemFont(10)
-  head.textColor = QUIET
+  head.textColor = look.quiet
   stack.addSpacer(4)
   if (!later.length) {
     const t = stack.addText(TEXT.noMore)
     t.font = Font.systemFont(size)
-    t.textColor = QUIET
+    t.textColor = look.quiet
     return
   }
   for (const { date, alarm } of later) {
@@ -442,13 +504,13 @@ function addLater(stack, later, now, size) {
     row.centerAlignContent()
     const t = row.addText(formatWhen(date, now))
     t.font = Font.semiboldRoundedSystemFont(size)
-    t.textColor = INK
+    t.textColor = look.ink
     t.lineLimit = 1
     if (alarm.label) {
       row.addSpacer(6)
       const l = row.addText(alarm.label)
       l.font = Font.systemFont(size)
-      l.textColor = QUIET
+      l.textColor = look.quiet
       l.lineLimit = 1
     }
     stack.addSpacer(3)
