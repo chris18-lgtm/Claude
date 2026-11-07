@@ -34,7 +34,13 @@ const NOTIFY_WHEN_NONE = false // true: notification "Kein Wecker aktiv" after t
 // If the Shortcut runs within this many minutes after its time, it counts as today's
 // (already rung) alarm instead of tomorrow's.
 const SNOOZE_WINDOW_MIN = 20
-const TAP_URL = "clock-alarm://" // tapping the widget opens the Clock app's alarms; "" = open Scriptable
+// Tapping the widget opens the Clock app. clock-alarm:// goes straight to the Alarms tab,
+// but Apple does not document it. If a tap does not open the Clock app, create a Shortcut
+// with the single action "Open App → Clock" and put its name here; a tap then runs it.
+const CLOCK_SHORTCUT = "" // e.g. "Uhr öffnen"
+const TAP_URL = CLOCK_SHORTCUT
+  ? `shortcuts://run-shortcut?name=${encodeURIComponent(CLOCK_SHORTCUT)}`
+  : "clock-alarm://"
 const URGENT_HOURS = 6 // home-screen accent turns red when the alarm is closer than this; 0 = off
 
 // ===== Core logic (no Scriptable APIs, testable on its own) =====
