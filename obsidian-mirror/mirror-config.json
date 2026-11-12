@@ -16,6 +16,5 @@
   "maxDeleteCount": 25,
   "maxDeletePercent": 20,
   "logDirectory": "%LOCALAPPDATA%\\ObsidianMirror\\logs",
-  "logRetentionDays": 14,
-  "syncIntervalMinutes": 30
+  "logRetentionDays": 14
 }
