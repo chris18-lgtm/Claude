@@ -1,0 +1,21 @@
+{
+  "pairs": [
+    {
+      "name": "main",
+      "source": "C:\\Users\\<user>\\OneDrive - <org>\\Obsidian\\MainVault",
+      "target": "C:\\Users\\<user>\\OneDrive - <org>\\CopilotMirror\\MainVault",
+      "excludeFolders": [".obsidian", ".trash", ".git", "Templates"]
+    },
+    {
+      "name": "study",
+      "source": "C:\\Users\\<user>\\OneDrive - <org>\\Obsidian\\StudyVault",
+      "target": "C:\\Users\\<user>\\OneDrive - <org>\\CopilotMirror\\StudyVault",
+      "excludeFolders": [".obsidian", ".trash", ".git", "Templates"]
+    }
+  ],
+  "maxDeleteCount": 25,
+  "maxDeletePercent": 20,
+  "logDirectory": "%LOCALAPPDATA%\\ObsidianMirror\\logs",
+  "logRetentionDays": 14,
+  "syncIntervalMinutes": 30
+}
